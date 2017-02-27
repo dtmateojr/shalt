@@ -1,0 +1,165 @@
+#!/usr/bin/env python
+
+import sys, getopt, subprocess, re, readline, os
+
+timeout = 3
+defaultDir = '/root'
+defaultCmd = 'cmd.run'
+saltCmds = ['test.ping',
+            'test.version',
+            'status.loadavg',
+            'status.uptime',
+            'puppet.enable',
+            'puppet.disable',
+            'puppet.noop',
+            'puppet.run',
+            'puppet.status',
+        ]
+
+def usage():
+    sys.stderr.write('Usage: %s [-E pattern | -L host,... | -N nodegroup]\n' % sys.argv[0].split('/')[-1])
+
+def help():
+    sys.stdout.write('Enter your commands as if running in a shell.\n')
+    sys.stdout.write('List of other available salt modules:\n')
+    for i in saltCmds:
+        sys.stdout.write("  %s\n" % i)
+
+def run_shell(m):
+    cmd = []
+    if dryrun != "":
+        cmd += [ 'echo' ]
+
+    cmd += ['salt']
+    devnull = open('/dev/null','w')
+
+    minions = m.split()
+    cmd += ['--timeout=%s' % timeout]
+    cmd += minions
+    cmd += [defaultCmd]
+    path = "PATH+=:/usr/local/bin:/usr/local/sbin; "
+    cwd = defaultDir
+
+    while True:
+        try:
+            line = raw_input('%s[%s] %s> ' % (dryrun, minions[1], cwd)).strip()
+        except EOFError:
+            sys.stdout.write('\n')
+            return
+        except KeyboardInterrupt:
+            sys.stderr.write('Keyboard interrupt\n')
+
+        if line in ['exit', 'quit']:
+            break
+
+        if re.search('^cd +|^cd$', line) != None:
+            oldcwd = cwd
+            arg = re.sub('^cd +|^cd$', '', line).rstrip('/')
+
+            if arg == '':
+                cwd = defaultDir
+                continue
+
+            if arg.startswith('/'):
+                cwd = ''
+                arg = arg.lstrip('/')
+
+            for d in arg.split('/'):
+                if d == '..':
+                    cwd = cwd.rsplit('/', 1)[0]
+                else:
+                    cwd += '/%s' % d
+            if cwd == '':
+                cwd = '/'
+
+            run = cmd[:]
+            run += ['cd %s' % cwd]
+            try:
+                junk = subprocess.check_call(run, stdout=devnull, stderr=devnull)
+            except:
+                sys.stderr.write("ERROR: could not cd to '%s'\n" % re.sub('^cd +|^cd$', '', line))
+                cwd = oldcwd
+
+        elif re.search('^history', line) != None:
+            readline.write_history_file(history_filename)
+            counter = 1
+            try:
+                with open(history_filename, 'r') as histfile:
+                    for line in histfile:
+                        print("%d: %s" % (counter, line.strip()))
+                        counter += 1
+                    histfile.close()
+            except:
+                pass
+
+        elif line == '':
+            continue
+
+        elif line in ['help', '?']:
+            help()
+            continue
+
+        elif line in saltCmds:
+            run = cmd[:]
+            run[run.index(defaultCmd)] = line
+            subprocess.call(run)
+
+        else:
+            run = cmd[:]
+            run += ["cwd='%s'" % cwd]
+            run += [path + line]
+            subprocess.call(run)
+
+    devnull.close()
+
+if __name__ == '__main__':
+    target = ''
+
+    dryrun = ''
+
+    try:
+        options, args = getopt.getopt(sys.argv[1:], 'nhE:L:N:')
+    except getopt.GetoptError, err:
+        sys.stderr.write(str(err))
+        usage()
+        sys.exit(1)
+
+    for opt, arg in options:
+        if opt == '-E':
+            if target != '':
+                usage()
+                sys.exit(1)
+            target = '-E %s' % arg
+        if opt == '-L':
+            if target != '':
+                usage()
+                sys.exit(1)
+            target = '-L %s' % arg
+        if opt == '-N':
+            if target != '':
+                usage()
+                sys.exit(1)
+            target = '-N %s' % arg
+        if opt == '-n':
+            dryrun = "dryrun: "
+        if opt == '-h':
+            usage()
+            sys.exit(0)
+
+    if target == '':
+        usage()
+        sys.exit(1)
+
+    local = os.path.expanduser('~/.local')
+    try:
+        os.mkdir(local)
+    except:
+        pass
+
+    history_filename = local + '/shalt'
+    if os.path.exists(history_filename):
+        readline.read_history_file(history_filename)
+
+    run_shell(target)
+
+    readline.write_history_file(history_filename)
