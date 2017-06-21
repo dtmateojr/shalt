@@ -102,13 +102,18 @@ def run_shell(m):
         elif line in saltCmds:
             run = cmd[:]
             run[run.index(defaultCmd)] = line
-            subprocess.call(run)
 
         else:
             run = cmd[:]
             run += ["cwd='%s'" % cwd]
             run += [path + line]
-            subprocess.call(run)
+
+        p = subprocess.Popen(run)
+        try:
+            p.communicate()
+        except KeyboardInterrupt:
+            p.kill()
+            sys.stderr.write('\nKeyboard interrupt\n')
 
     devnull.close()
 
