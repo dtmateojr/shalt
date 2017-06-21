@@ -47,7 +47,7 @@ def run_shell(m):
             sys.stdout.write('\n')
             return
         except KeyboardInterrupt:
-            sys.stderr.write('Keyboard interrupt\n')
+            sys.stderr.write('\nKeyboard interrupt\n')
 
         if line in ['exit', 'quit']:
             break
