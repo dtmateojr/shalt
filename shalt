@@ -52,9 +52,9 @@ def run_shell(m):
         if line in ['exit', 'quit']:
             break
 
-        if re.search('^cd +|^cd$', line) != None:
+        if re.search('^ *cd +|^ *cd *$', line) != None:
             oldcwd = cwd
-            arg = re.sub('^cd +|^cd$', '', line).rstrip('/')
+            arg = re.sub('^ *cd +|^ *cd *$', '', line).rstrip('/')
 
             if arg == '':
                 cwd = defaultDir
@@ -77,10 +77,11 @@ def run_shell(m):
             try:
                 junk = subprocess.check_call(run, stdout=devnull, stderr=devnull)
             except:
-                sys.stderr.write("ERROR: could not cd to '%s'\n" % re.sub('^cd +|^cd$', '', line))
+                sys.stderr.write("ERROR: could not cd to '%s'\n" % re.sub('^ *cd +|^ *cd *$', '', line))
                 cwd = oldcwd
+                continue
 
-        elif re.search('^history', line) != None:
+        elif re.search('^ *history *', line) != None:
             readline.write_history_file(history_filename)
             counter = 1
             try:
