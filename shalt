@@ -24,6 +24,8 @@ prompts = {'MAIN':'>',
            'SELECT':'>>>'
 }
 
+MI = 3
+
 def usage():
     sys.stderr.write('Usage: %s [-E pattern | -L host,... | -N nodegroup]\n' % sys.argv[0].split('/')[-1])
 
@@ -139,6 +141,7 @@ def run_shell(m):
             if len(args) == 1:
                 testrun = cmd[:]
                 testrun[testrun.index(defaultCmd)] = 'test.ping'
+                testrun[MI = "'%s'" % testrun[MI]
                 ping = ' '.join(testrun) + '|grep -B1 True|grep :|cut -d: -f1'
                 try:
                     p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=devnull, shell=True)
