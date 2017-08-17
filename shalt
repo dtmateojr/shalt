@@ -16,17 +16,32 @@ saltCmds = ['test.ping',
             'puppet.status',
         ]
 
+modes = {'MAIN':'main',
+         'SELECT':'select'
+}
+
+prompts = {'MAIN':'>',
+           'SELECT':'>>>'
+}
+
 def usage():
     sys.stderr.write('Usage: %s [-E pattern | -L host,... | -N nodegroup]\n' % sys.argv[0].split('/')[-1])
 
 def help():
-    sys.stdout.write('Enter your commands as if running in a shell.\n')
+    sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n')
+    sys.stdout.write('To select a subset of minions, use "select". Commands will only run on this subset. "exit" will revert to the original selection.\n')
+    sys.stdout.write('To run a one-off command on a subset of minions, use "select <minions> <command>"\n')
     sys.stdout.write('List of other available salt modules:\n')
     for i in saltCmds:
         sys.stdout.write("  %s\n" % i)
 
 def run_shell(m):
     cmd = []
+    origcmd = []
+    mode = modes['MAIN']
+    subselect = False
+    prompt = '>'
+
     if dryrun != "":
         cmd += [ 'echo' ]
 
@@ -42,14 +57,22 @@ def run_shell(m):
 
     while True:
         try:
-            line = raw_input('%s[%s] %s> ' % (dryrun, minions[1], cwd)).strip()
+            line = raw_input('%s[%s] %s%s ' % (dryrun, mode, cwd, prompt)).strip()
         except EOFError:
             sys.stdout.write('\n')
             return
         except KeyboardInterrupt:
+            line = ''
             sys.stderr.write('\nKeyboard interrupt\n')
 
         if line in ['exit', 'quit']:
+            if subselect:
+                prompt = prompts['MAIN']
+                cmd = origcmd[:]
+                mode = modes['MAIN']
+                subselect = False
+                continue
+
             break
 
         if re.search('^ *cd +|^ *cd *$', line) != None:
@@ -93,6 +116,8 @@ def run_shell(m):
             except:
                 pass
 
+            continue
+
         elif line == '':
             continue
 
@@ -103,6 +128,68 @@ def run_shell(m):
         elif line in saltCmds:
             run = cmd[:]
             run[run.index(defaultCmd)] = line
+
+        elif re.search('^ *select *', line) != None:
+            if subselect:
+                sys.stderr.write('Already in subselect mode.')
+                continue
+
+            minions = []
+            args = shlex.split(line)
+            if len(args) == 1:
+                testrun = cmd[:]
+                testrun[testrun.index(defaultCmd)] = 'test.ping'
+                ping = ' '.join(testrun) + '|grep -B1 True|grep :|cut -d: -f1'
+                try:
+                    p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=devnull, shell=True)
+                    out, err = p.communicate()
+                    minions = out.split()
+                    minions.sort()
+                    i = 1
+                    sys.stdout.write('Select minions by typing their number separated by space:\n')
+                    for m in minions:
+                        sys.stdout.write('%d:\t%s\n' % (i, m))
+                        i += 1
+                    selection = raw_input('selection> ').strip().split()
+                    if len(selection) < 1:
+                        sys.stderr.write('No minions were selected.\n')
+                        continue
+
+                    error = False
+                    for i in selection:
+                        if int(i) < 1 or int(i) > len(minions):
+                            sys.stderr.write('Selection out of range: %s\n' % i)
+                            error = True
+                            break
+
+                    if error:
+                        continue
+                    else:
+                        subselect = True
+                        origcmd = cmd[:]
+                        mode = modes['SELECT']
+                        prompt = prompts['SELECT']
+                        sel = ''
+                        cmd = ['salt', '--timeout=%s' % timeout, '-L']
+                        for i in selection:
+                            sel += '%s,' % minions[int(i)-1]
+                        cmd += ['%s' % sel.rstrip(','), defaultCmd]
+
+                except:
+                    sys.stderr.write('Could not ping minions.\n')
+
+                continue
+
+            elif len(args) < 3:
+                sys.stderr.write('usage: select <target hosts> <command>')
+                continue
+
+            line = re.sub('^ *%s *%s *' % (args[0], re.escape(args[1])), '', line)
+            run = ['salt', '--timeout=%s' % timeout, '-E', args[1]]
+            if not args[2] in saltCmds:
+                run += ['cmd.run', "cwd='%s'" % cwd, path + line]
+            else:
+                run += [line]
 
         else:
             run = cmd[:]
