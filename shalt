@@ -30,14 +30,18 @@ def usage():
     sys.stderr.write('Usage: %s [-E pattern | -L host,... | -N nodegroup]\n' % sys.argv[0].split('/')[-1])
 
 def help():
-    sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n')
-    sys.stdout.write('To select a subset of minions, use "select". Commands will only run on this subset. "exit" will revert to the original selection.\n')
-    sys.stdout.write('To run a one-off command on a subset of minions, use "select <minions> <command>"\n')
+    sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n\n')
+    sys.stdout.write('To select a subset of minions, use "select [minions] [command]". Commands will only run on this subset.\n')
+    sys.stdout.write('Select examples:\n')
+    sys.stdout.write('\tselect\n')
+    sys.stdout.write('\tselect list-of-minions\n')
+    sys.stdout.write('\tselect list-of-minions command\n\n')
     sys.stdout.write('List of other available salt modules:\n')
     for i in saltCmds:
         sys.stdout.write("  %s\n" % i)
 
 def run_shell(m):
+    global MI
     cmd = []
     origcmd = []
     mode = modes['MAIN']
@@ -47,14 +51,14 @@ def run_shell(m):
     if dryrun != "":
         cmd += [ 'echo' ]
 
-    cmd += ['salt']
     devnull = open('/dev/null','w')
 
+    cmd += ['salt']
     minions = shlex.split(m)
     cmd += ['--timeout=%s' % timeout]
     cmd += minions
     cmd += [defaultCmd]
-    path = 'PATH+=:/usr/local/bin:/usr/local/sbin; '
+    path = "PATH+=:/usr/local/bin:/usr/local/sbin; "
     cwd = defaultDir
     origcwd = defaultDir
 
@@ -135,7 +139,7 @@ def run_shell(m):
 
         elif re.search('^ *select *', line) != None:
             if subselect:
-                sys.stderr.write('Already in subselect mode.')
+                sys.stderr.write('Already in subselect mode.\n')
                 continue
 
             minions = []
@@ -144,7 +148,7 @@ def run_shell(m):
                 testrun = cmd[:]
                 testrun[testrun.index(defaultCmd)] = 'test.ping'
                 testrun[MI] = "'%s'" % testrun[MI]
-                ping = ' '.join(testrun) + '|grep -B1 True|grep :|cut -d: -f1'
+                ping = ' '.join(testrun) + '|grep -B1 True|grep :|sed -e "s/ \+.\+//" -e "s/:$//"'
                 try:
                     p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=devnull, shell=True)
                     out, err = p.communicate()
@@ -175,8 +179,9 @@ def run_shell(m):
                         mode = modes['SELECT']
                         prompt = prompts['SELECT']
                         origcwd = cwd
-                        sel = ''
                         cmd = ['salt', '--timeout=%s' % timeout, '-L']
+
+                        sel = ''
                         for i in selection:
                             sel += '%s,' % minions[int(i)-1]
                         cmd += ['%s' % sel.rstrip(','), defaultCmd]
@@ -186,8 +191,13 @@ def run_shell(m):
 
                 continue
 
-            elif len(args) < 3:
-                sys.stderr.write('usage: select <target hosts> <command>')
+            elif len(args) == 2:
+                subselect = True
+                origcmd = cmd[:]
+                mode = modes['SELECT']
+                prompt = prompts['SELECT']
+                origcwd = cwd
+                cmd = ['salt', '--timeout=%s' % timeout, '-E', '%s' % args[1], defaultCmd]
                 continue
 
             line = re.sub('^ *%s *%s *' % (args[0], re.escape(args[1])), '', line)
@@ -219,7 +229,7 @@ if __name__ == '__main__':
     try:
         options, args = getopt.getopt(sys.argv[1:], 'nhE:L:N:')
     except getopt.GetoptError, err:
-        sys.stderr.write(str(err))
+        sys.stderr.write(str(err) + '\n')
         usage()
         sys.exit(1)
 
