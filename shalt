@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, getopt, subprocess, re, readline, os, shlex
+import sys, getopt, subprocess, re, readline, os, shlex, tempfile, shutil
 
 timeout = 3
 defaultDir = '/root'
@@ -137,7 +137,7 @@ def run_shell(m):
             run = cmd[:]
             run[run.index(defaultCmd)] = line
 
-        elif re.search('^ *select *', line) != None:
+        elif re.search('^ *(sel|select) *', line) != None:
             if subselect:
                 sys.stderr.write('Already in subselect mode.\n')
                 continue
@@ -206,6 +206,81 @@ def run_shell(m):
                 run += ['cmd.run', "cwd='%s'" % cwd, path + line]
             else:
                 run += [line]
+
+        elif re.search('^ *(edit|vi|vim) *', line) != None:
+            if not subselect:
+                sys.stderr.write('Select ONE minion first before using edit feature\n')
+                continue
+
+            testrun = cmd[:]
+            testrun[testrun.index(defaultCmd)] = 'test.ping'
+            ping = ' '.join(testrun) + '|grep True|wc -l'
+            p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=devnull, shell=True)
+            out, err = p.communicate()
+            if int(out) != 1:
+                sys.stderr.write('Edit feature only works when ONE minion is selected.\n')
+                continue
+
+            filename = shlex.split(line)[1]
+            cat = cmd[:]
+            cat += ["cwd='%s'" % cwd, path + 'cat %s; echo "XXXXX"' % filename, '--out=newline_values_only']
+            try:
+                p = subprocess.Popen(cat, stdout=subprocess.PIPE, stderr=devnull)
+                out, err = p.communicate()
+            except:
+                sys.stderr.write('Error reading %s.\n' % filename)
+                continue
+
+            tempd = tempfile.mkdtemp()
+            origfile = open('%s/%s' % (tempd, filename), 'w')
+            origfile.write(out)
+            origfile.close()
+            copyfile = open('%s/%s.copy' % (tempd, filename), 'w')
+            subprocess.call(['head','-n', '-1', '%s/%s' % (tempd, filename)], stdout=copyfile)
+            copyfile.close()
+            shutil.copy('%s/%s.copy' % (tempd, filename), '%s/%s' % (tempd, filename))
+
+            subprocess.call(['/usr/bin/vim', '%s/%s' % (tempd, filename)])
+
+            p = subprocess.Popen(['diff', '-u', '%s/%s.copy' % (tempd, filename), '%s/%s' % (tempd, filename)], stdout=subprocess.PIPE, stderr=devnull)
+            diff, err = p.communicate()
+            shutil.rmtree(tempd)
+            if len(diff.strip()) == 0:
+                sys.stdout.write('No change to original file. Edit cancelled.\n')
+                continue
+
+            mktemp = cmd[:]
+            mktemp += [path + 'mktemp', '--out=newline_values_only']
+            p = subprocess.Popen(mktemp, stdout=subprocess.PIPE, stderr=devnull)
+            tempf, err = p.communicate()
+
+            saltwrite = cmd[:]
+            saltwrite.insert(saltwrite.index(defaultCmd), '--')
+            saltwrite[saltwrite.index(defaultCmd)] = 'file.write'
+            saltwrite += [tempf, '%s' % diff]
+            try:
+                subprocess.call(saltwrite, stdout=devnull, stderr=devnull)
+            except:
+                sys.stderr.write('Could not write to %s. Change might be too big?\n' % filename)
+                continue
+
+            if not filename.startswith('/'):
+                filename = cwd + '/' + filename
+
+            saltpatch = cmd[:]
+            saltpatch[saltpatch.index(defaultCmd)] = 'file.patch'
+            saltpatch += [filename, tempf]
+            try:
+                subprocess.call(saltpatch, stdout=devnull, stderr=devnull)
+            except:
+                sys.stderr.write('Unknown error writing to file.\n')
+                continue
+
+            delpatch = cmd[:]
+            delpatch += [path + '\rm %s' % tempf]
+            subprocess.call(delpatch, stdout=devnull, stderr=devnull)
+
+            continue
 
         else:
             run = cmd[:]
