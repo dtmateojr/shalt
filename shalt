@@ -1,308 +1,363 @@
 #!/usr/bin/env python
 
-import sys, getopt, subprocess, re, readline, os, shlex, tempfile, shutil
-
-timeout = 3
-defaultDir = '/root'
-defaultCmd = 'cmd.run'
-saltCmds = ['test.ping',
-            'test.version',
-            'status.loadavg',
-            'status.uptime',
-            'puppet.enable',
-            'puppet.disable',
-            'puppet.noop',
-            'puppet.run',
-            'puppet.status',
-        ]
-
-modes = {'MAIN':'main',
-         'SELECT':'select'
-}
-
-prompts = {'MAIN':'>',
-           'SELECT':'>>>'
-}
-
-MI = 3
+import sys, getopt, subprocess, re, readline, os, shlex, tempfile, shutil, ast
 
 def usage():
     sys.stderr.write('Usage: %s [-E pattern | -L host,... | -N nodegroup]\n' % sys.argv[0].split('/')[-1])
 
-def help():
-    sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n\n')
-    sys.stdout.write('To select a subset of minions, use "select [minions] [command]". Commands will only run on this subset.\n')
-    sys.stdout.write('Select examples:\n')
-    sys.stdout.write('\tselect\n')
-    sys.stdout.write('\tselect list-of-minions\n')
-    sys.stdout.write('\tselect list-of-minions command\n\n')
-    sys.stdout.write('List of other available salt modules:\n')
-    for i in saltCmds:
-        sys.stdout.write("  %s\n" % i)
+class Shalt(object):
+    _timeout = 3
+    _defaultDir = '/root'
+    _defaultCmd = 'cmd.run'
+    _saltCmds = ['test.ping',
+                'test.version',
+                'status.loadavg',
+                'status.uptime',
+                'puppet.enable',
+                'puppet.disable',
+                'puppet.noop',
+                'puppet.run',
+                'puppet.status',
+            ]
 
-def run_shell(m):
-    global MI
-    cmd = []
-    origcmd = []
-    mode = modes['MAIN']
-    subselect = False
-    prompt = prompts['MAIN']
+    _modes = {'MAIN':'main',
+             'SELECT':'select'
+    }
 
-    if dryrun != "":
-        cmd += [ 'echo' ]
+    _prompts = {'MAIN':'>',
+               'SELECT':'>>>'
+    }
 
-    devnull = open('/dev/null','w')
+    _MI = 3
+    _path = "PATH+=:/usr/local/bin:/usr/local/sbin:/opt/puppetlabs/bin; "
 
-    cmd += ['salt']
-    minions = shlex.split(m)
-    cmd += ['--timeout=%s' % timeout]
-    cmd += minions
-    cmd += [defaultCmd]
-    path = "PATH+=:/usr/local/bin:/usr/local/sbin; "
-    cwd = defaultDir
-    origcwd = defaultDir
+    def __init__(self, target):
+        self._cmd = []
+        self._origcmd = []
+        self._mode = self._modes['MAIN']
+        self._subselect = False
+        self._prompt = self._prompts['MAIN']
+        self._minions = shlex.split(target)
+        self._cwd = self._defaultDir
+        self._origcwd = self._defaultDir
+        self._curdir = ''
+        self._files = []
+        self._matches = []
+        self._devnull = open('/dev/null','w')
 
-    while True:
-        try:
-            line = raw_input('%s[%s] %s%s ' % (dryrun, mode, cwd, prompt)).strip()
-        except EOFError:
-            sys.stdout.write('\n')
+    def _help(self):
+        sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n')
+        sys.stdout.write('Ctrl-C to cancel a command. Ctrl-G to abort a reverse history search (via Ctrl-R).\n\n')
+        sys.stdout.write('To select a subset of minions, use "select [minions] [command]". Commands will only run on this subset.\n')
+        sys.stdout.write('Select examples:\n')
+        sys.stdout.write('\tselect\n')
+        sys.stdout.write('\tselect list-of-minions\n')
+        sys.stdout.write('\tselect list-of-minions command\n\n')
+        sys.stdout.write('List of other available salt modules:\n')
+        for i in self._saltCmds:
+            sys.stdout.write("  %s\n" % i)
+
+        sys.stdout.write('\nType "help" at any time to display this message.\n\n')
+
+    def _get_files(self):
+        if self._curdir == self._cwd:
             return
-        except KeyboardInterrupt:
-            line = ''
-            sys.stderr.write('\nKeyboard interrupt\n')
 
-        if line in ['exit', 'quit']:
-            if subselect:
-                prompt = prompts['MAIN']
-                cmd = origcmd[:]
-                mode = modes['MAIN']
-                subselect = False
-                cwd = origcwd
-                continue
-
-            break
-
-        if re.search('^ *cd +|^ *cd *$', line) != None:
-            oldcwd = cwd
-            arg = re.sub('^ *cd +|^ *cd *$', '', line).rstrip('/')
-
-            if arg == '':
-                cwd = defaultDir
-                continue
-
-            if arg.startswith('/'):
-                cwd = ''
-                arg = arg.lstrip('/')
-
-            for d in arg.split('/'):
-                if d == '..':
-                    cwd = cwd.rsplit('/', 1)[0]
-                else:
-                    cwd += '/%s' % d
-            if cwd == '':
-                cwd = '/'
-
-            run = cmd[:]
-            run += ['cd %s' % cwd]
-            try:
-                junk = subprocess.check_call(run, stdout=devnull, stderr=devnull)
-            except:
-                sys.stderr.write("ERROR: could not cd to '%s'\n" % re.sub('^ *cd +|^ *cd *$', '', line))
-                cwd = oldcwd
-                continue
-
-        elif re.search('^ *history *', line) != None:
-            readline.write_history_file(history_filename)
-            counter = 1
-            try:
-                with open(history_filename, 'r') as histfile:
-                    for line in histfile:
-                        print("%d: %s" % (counter, line.strip()))
-                        counter += 1
-                    histfile.close()
-            except:
-                pass
-
-            continue
-
-        elif line == '':
-            continue
-
-        elif line in ['help', '?']:
-            help()
-            continue
-
-        elif line in saltCmds:
-            run = cmd[:]
-            run[run.index(defaultCmd)] = line
-
-        elif re.search('^ *(sel|select) *', line) != None:
-            if subselect:
-                sys.stderr.write('Already in subselect mode.\n')
-                continue
-
-            minions = []
-            args = shlex.split(line)
-            if len(args) == 1:
-                testrun = cmd[:]
-                testrun[testrun.index(defaultCmd)] = 'test.ping'
-                testrun[MI] = "'%s'" % testrun[MI]
-                ping = ' '.join(testrun) + '|grep -B1 True|grep :|sed -e "s/ \+.\+//" -e "s/:$//"'
-                try:
-                    p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=devnull, shell=True)
-                    out, err = p.communicate()
-                    minions = out.split()
-                    minions.sort()
-                    i = 1
-                    sys.stdout.write('Select minions by typing their number separated by space:\n')
-                    for m in minions:
-                        sys.stdout.write('%d:\t%s\n' % (i, m))
-                        i += 1
-                    selection = raw_input('selection> ').strip().split()
-                    if len(selection) < 1:
-                        sys.stderr.write('No minions were selected.\n')
-                        continue
-
-                    error = False
-                    for i in selection:
-                        if int(i) < 1 or int(i) > len(minions):
-                            sys.stderr.write('Selection out of range: %s\n' % i)
-                            error = True
-                            break
-
-                    if error:
-                        continue
-                    else:
-                        subselect = True
-                        origcmd = cmd[:]
-                        mode = modes['SELECT']
-                        prompt = prompts['SELECT']
-                        origcwd = cwd
-                        cmd = ['salt', '--timeout=%s' % timeout, '-L']
-
-                        sel = ''
-                        for i in selection:
-                            sel += '%s,' % minions[int(i)-1]
-                        cmd += ['%s' % sel.rstrip(','), defaultCmd]
-
-                except:
-                    sys.stderr.write('Could not ping minions.\n')
-
-                continue
-
-            elif len(args) == 2:
-                subselect = True
-                origcmd = cmd[:]
-                mode = modes['SELECT']
-                prompt = prompts['SELECT']
-                origcwd = cwd
-                cmd = ['salt', '--timeout=%s' % timeout, '-E', '%s' % args[1], defaultCmd]
-                continue
-
-            line = re.sub('^ *%s *%s *' % (args[0], re.escape(args[1])), '', line)
-            run = ['salt', '--timeout=%s' % timeout, '-E', args[1]]
-            if not args[2] in saltCmds:
-                run += ['cmd.run', "cwd='%s'" % cwd, path + line]
-            else:
-                run += [line]
-
-        elif re.search('^ *(edit|vi|vim) *', line) != None:
-            if not subselect:
-                sys.stderr.write('Select ONE minion first before using edit feature\n')
-                continue
-
-            testrun = cmd[:]
-            testrun[testrun.index(defaultCmd)] = 'test.ping'
-            ping = ' '.join(testrun) + '|grep True|wc -l'
-            p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=devnull, shell=True)
-            out, err = p.communicate()
-            if int(out) != 1:
-                sys.stderr.write('Edit feature only works when ONE minion is selected.\n')
-                continue
-
-            filename = shlex.split(line)[1]
-            cat = cmd[:]
-            cat += ["cwd='%s'" % cwd, path + 'cat %s; echo "XXXXX"' % filename, '--out=newline_values_only']
-            try:
-                p = subprocess.Popen(cat, stdout=subprocess.PIPE, stderr=devnull)
-                out, err = p.communicate()
-            except:
-                sys.stderr.write('Error reading %s.\n' % filename)
-                continue
-
-            tempd = tempfile.mkdtemp()
-            origfile = open('%s/%s' % (tempd, filename), 'w')
-            origfile.write(out)
-            origfile.close()
-            copyfile = open('%s/%s.copy' % (tempd, filename), 'w')
-            subprocess.call(['head','-n', '-1', '%s/%s' % (tempd, filename)], stdout=copyfile)
-            copyfile.close()
-            shutil.copy('%s/%s.copy' % (tempd, filename), '%s/%s' % (tempd, filename))
-
-            subprocess.call(['/usr/bin/vim', '%s/%s' % (tempd, filename)])
-
-            p = subprocess.Popen(['diff', '-u', '%s/%s.copy' % (tempd, filename), '%s/%s' % (tempd, filename)], stdout=subprocess.PIPE, stderr=devnull)
-            diff, err = p.communicate()
-            shutil.rmtree(tempd)
-            if len(diff.strip()) == 0:
-                sys.stdout.write('No change to original file. Edit cancelled.\n')
-                continue
-
-            mktemp = cmd[:]
-            mktemp += [path + 'mktemp', '--out=newline_values_only']
-            p = subprocess.Popen(mktemp, stdout=subprocess.PIPE, stderr=devnull)
-            tempf, err = p.communicate()
-
-            saltwrite = cmd[:]
-            saltwrite.insert(saltwrite.index(defaultCmd), '--')
-            saltwrite[saltwrite.index(defaultCmd)] = 'file.write'
-            saltwrite += [tempf, '%s' % diff]
-            try:
-                subprocess.call(saltwrite, stdout=devnull, stderr=devnull)
-            except:
-                sys.stderr.write('Could not write to %s. Change might be too big?\n' % filename)
-                continue
-
-            if not filename.startswith('/'):
-                filename = cwd + '/' + filename
-
-            saltpatch = cmd[:]
-            saltpatch[saltpatch.index(defaultCmd)] = 'file.patch'
-            saltpatch += [filename, tempf]
-            try:
-                subprocess.call(saltpatch, stdout=devnull, stderr=devnull)
-            except:
-                sys.stderr.write('Unknown error writing to file.\n')
-                continue
-
-            delpatch = cmd[:]
-            delpatch += [path + '\rm %s' % tempf]
-            subprocess.call(delpatch, stdout=devnull, stderr=devnull)
-
-            continue
-
-        else:
-            run = cmd[:]
-            run += ["cwd='%s'" % cwd]
-            run += [path + line]
-
-        p = subprocess.Popen(run)
+        self._curdir = self._cwd
+        ls = self._cmd[:]
+        ls += ['ls', "cwd='%s'" % self._curdir, '--out=json', '--static']
+        p = subprocess.Popen(ls, stdout=subprocess.PIPE, stderr=self._devnull)
+        out, err = p.communicate()
         try:
-            p.communicate()
-        except KeyboardInterrupt:
-            p.kill()
-            sys.stderr.write('\nKeyboard interrupt\n')
+            lsout = ast.literal_eval(out)
+        except:
+            sys.stderr.write('Tab completion error!\n')
+            return None
 
-    devnull.close()
+        common = set()
+        for m in lsout.keys():
+            if len(common) == 0:
+                common = set(lsout[m].split('\n'))
+            else:
+                common = common.intersection(set(lsout[m].split('\n')))
+
+        self._files = list(common)
+        self._files.sort()
+
+    def _tab_complete(self, text, state):
+        if state == 0:
+            if text:
+                self._matches = []
+                for f in self._files:
+                    if f and f.startswith(text): self._matches += [f]
+            else:
+                self._matches = self._files[:]
+
+        try:
+            result = self._matches[state]
+        except IndexError:
+            result = None
+
+        return result
+
+    def run_shell(self):
+        self._cmd = ['salt', '--timeout=%s' % self._timeout]
+        self._cmd += self._minions
+        self._cmd += [self._defaultCmd]
+
+        readline.set_completer(self._tab_complete)
+        readline.set_completer_delims(' ')
+        readline.parse_and_bind('tab: complete')
+
+        self._help()
+
+        self._get_files()
+        while True:
+            try:
+                line = raw_input('[%s] %s%s ' % (self._mode, self._cwd, self._prompt)).strip()
+            except EOFError:
+                sys.stdout.write('\n')
+                return
+            except KeyboardInterrupt:
+                sys.stderr.write('\nKeyboard interrupt\n')
+                continue
+
+            if line in ['exit', 'quit']:
+                if self._subselect:
+                    self._prompt = self._prompts['MAIN']
+                    self._cmd = self._origcmd[:]
+                    self._mode = self._modes['MAIN']
+                    self._subselect = False
+                    self._cwd = self._origcwd
+                    self._get_files()
+                    continue
+
+                break
+
+            if re.search('^cd +|^cd$', line) != None:
+                oldcwd = self._cwd
+                arg = re.sub('^cd +|^cd$', '', line).strip()
+                if arg != '/':
+                    arg = arg.rstrip('/')
+
+                if arg == '':
+                    self._cwd = self._defaultDir
+                    self._get_files()
+                    continue
+
+                if arg.startswith('/'):
+                    self._cwd = ''
+                    arg = arg.lstrip('/')
+
+                for d in arg.split('/'):
+                    if d == '..':
+                        self._cwd = self._cwd.rsplit('/', 1)[0]
+                    else:
+                        if self._cwd == '/':
+                            self._cwd += d
+                        else:
+                            self._cwd += '/%s' % d
+                if self._cwd == '':
+                    self._cwd = '/'
+
+                run = self._cmd[:]
+                run += ['cd %s' % self._cwd]
+                try:
+                    junk = subprocess.check_call(run, stdout=self._devnull, stderr=self._devnull)
+                    self._get_files()
+                except:
+                    sys.stderr.write("ERROR: could not cd to '%s'\n" % re.sub('^ *cd +|^ *cd *$', '', line))
+                    self._cwd = oldcwd
+                    continue
+
+            elif re.search('^history$', line) != None:
+                readline.write_history_file(history_filename)
+                counter = 1
+                try:
+                    with open(history_filename, 'r') as histfile:
+                        for line in histfile:
+                            print("%d: %s" % (counter, line.strip()))
+                            counter += 1
+                        histfile.close()
+                except:
+                    pass
+
+                continue
+
+            elif line == '':
+                continue
+
+            elif line in ['help', '?']:
+                self._help()
+                continue
+
+            elif line in self._saltCmds:
+                run = self._cmd[:]
+                run[run.index(self._defaultCmd)] = line
+
+            elif re.search('^(sel|select) *', line) != None:
+                if self._subselect:
+                    sys.stderr.write('Already in subselect mode.\n')
+                    continue
+
+                minions = []
+                args = shlex.split(line)
+                if len(args) == 1:
+                    testrun = self._cmd[:]
+                    testrun[testrun.index(self._defaultCmd)] = 'test.ping'
+                    testrun[self._MI] = "'%s'" % testrun[self._MI]
+                    ping = ' '.join(testrun) + '|grep -B1 True|grep :|sed -e "s/ \+.\+//" -e "s/:$//"'
+                    try:
+                        p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=self._devnull, shell=True)
+                        out, err = p.communicate()
+                        minions = out.split()
+                        minions.sort()
+                        i = 1
+                        sys.stdout.write('Select minions by typing their number separated by space:\n')
+                        for m in minions:
+                            sys.stdout.write('%d:\t%s\n' % (i, m))
+                            i += 1
+                        selection = raw_input('selection> ').strip().split()
+                        if len(selection) < 1:
+                            sys.stderr.write('No minions were selected.\n')
+                            continue
+
+                        error = False
+                        for i in selection:
+                            if int(i) < 1 or int(i) > len(minions):
+                                sys.stderr.write('Selection out of range: %s\n' % i)
+                                error = True
+                                break
+
+                        if error:
+                            continue
+                        else:
+                            self._subselect = True
+                            self._origcmd = self._cmd[:]
+                            self._mode = self._modes['SELECT']
+                            self._prompt = self._prompts['SELECT']
+                            self._origcwd = self._cwd
+                            self._cmd = ['salt', '--timeout=%s' % self._timeout, '-L']
+
+                            sel = ''
+                            for i in selection:
+                                sel += '%s,' % minions[int(i)-1]
+                            self._cmd += ['%s' % sel.rstrip(','), self._defaultCmd]
+
+                    except:
+                        sys.stderr.write('Could not ping minions.\n')
+
+                    continue
+
+                elif len(args) == 2:
+                    self._subselect = True
+                    self._origcmd = self._cmd[:]
+                    self._mode = self._modes['SELECT']
+                    self._prompt = self._prompts['SELECT']
+                    self._origcwd = self._cwd
+                    self._cmd = ['salt', '--timeout=%s' % self._timeout, '-E', '%s' % args[1], self._defaultCmd]
+                    continue
+
+                line = re.sub('^ *%s *%s *' % (args[0], re.escape(args[1])), '', line)
+                run = ['salt', '--timeout=%s' % self._timeout, '-E', args[1]]
+                if not args[2] in self._saltCmds:
+                    run += ['cmd.run', "cwd='%s'" % self._cwd, self._path + line]
+                else:
+                    run += [line]
+
+            elif re.search('^(edit|vi|vim) +', line) != None:
+                if not self._subselect:
+                    sys.stderr.write('Select ONE minion first before using edit feature\n')
+                    continue
+
+                testrun = self._cmd[:]
+                testrun[testrun.index(self._defaultCmd)] = 'test.ping'
+                ping = ' '.join(testrun) + '|grep True|wc -l'
+                p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=self._devnull, shell=True)
+                out, err = p.communicate()
+                if int(out) != 1:
+                    sys.stderr.write('Edit feature only works when ONE minion is selected.\n')
+                    continue
+
+                filename = shlex.split(line)[1]
+                cat = self._cmd[:]
+                cat += ["cwd='%s'" % self._cwd, self._path + 'cat %s; echo "XXXXX"' % filename, '--out=newline_values_only']
+                try:
+                    p = subprocess.Popen(cat, stdout=subprocess.PIPE, stderr=self._devnull)
+                    out, err = p.communicate()
+                except:
+                    sys.stderr.write('Error reading %s.\n' % filename)
+                    continue
+
+                tempd = tempfile.mkdtemp()
+                buf = os.path.basename(filename)
+                with open('%s/%s' % (tempd, buf), 'w') as origfile:
+                    origfile.write(out)
+                with open('%s/%s.copy' % (tempd, buf), 'w') as copyfile:
+                    subprocess.call(['head','-n', '-1', '%s/%s' % (tempd, buf)], stdout=copyfile)
+                shutil.copy('%s/%s.copy' % (tempd, buf), '%s/%s' % (tempd, buf))
+
+                subprocess.call(['/usr/bin/vim', '%s/%s' % (tempd, buf)])
+
+                p = subprocess.Popen(['diff', '-u', '%s/%s.copy' % (tempd, buf), '%s/%s' % (tempd, buf)], stdout=subprocess.PIPE, stderr=self._devnull)
+                diff, err = p.communicate()
+                shutil.rmtree(tempd)
+                if len(diff.strip()) == 0:
+                    sys.stdout.write('No change to original file. Edit cancelled.\n')
+                    continue
+
+                mktemp = self._cmd[:]
+                mktemp += [self._path + 'mktemp', '--out=newline_values_only']
+                p = subprocess.Popen(mktemp, stdout=subprocess.PIPE, stderr=self._devnull)
+                tempf, err = p.communicate()
+
+                saltwrite = self._cmd[:]
+                saltwrite.insert(saltwrite.index(self._defaultCmd), '--')
+                saltwrite[saltwrite.index(self._defaultCmd)] = 'file.write'
+                saltwrite += [tempf, '%s' % diff]
+                try:
+                    subprocess.call(saltwrite, stdout=self._devnull, stderr=self._devnull)
+                except:
+                    sys.stderr.write('Could not write to %s. Change might be too big?\n' % filename)
+                    continue
+
+                if not filename.startswith('/'):
+                    filename = self._cwd + '/' + filename
+
+                saltpatch = self._cmd[:]
+                saltpatch[saltpatch.index(self._defaultCmd)] = 'file.patch'
+                saltpatch += [filename, tempf]
+                try:
+                    subprocess.call(saltpatch, stdout=self._devnull, stderr=self._devnull)
+                except:
+                    sys.stderr.write('Unknown error writing to file.\n')
+                    continue
+
+                delpatch = self._cmd[:]
+                delpatch += [self._path + '\rm %s' % tempf]
+                subprocess.call(delpatch, stdout=self._devnull, stderr=self._devnull)
+
+                continue
+
+            else:
+                run = self._cmd[:]
+                run += ["cwd='%s'" % self._cwd]
+                run += [self._path + line]
+
+            p = subprocess.Popen(run)
+            try:
+                p.communicate()
+            except KeyboardInterrupt:
+                p.kill()
+                sys.stderr.write('\nKeyboard interrupt\n')
+
+        self._devnull.close()
 
 if __name__ == '__main__':
     target = ''
 
-    dryrun = ''
-
     try:
-        options, args = getopt.getopt(sys.argv[1:], 'nhE:L:N:')
+        options, args = getopt.getopt(sys.argv[1:], 'hE:L:N:')
     except getopt.GetoptError, err:
         sys.stderr.write(str(err) + '\n')
         usage()
@@ -324,8 +379,6 @@ if __name__ == '__main__':
                 usage()
                 sys.exit(1)
             target = '-N %s' % arg
-        if opt == '-n':
-            dryrun = "dryrun: "
         if opt == '-h':
             usage()
             sys.exit(0)
@@ -344,6 +397,7 @@ if __name__ == '__main__':
     if os.path.exists(history_filename):
         readline.read_history_file(history_filename)
 
-    run_shell(target)
+    shalt = Shalt(target)
+    shalt.run_shell()
 
     readline.write_history_file(history_filename)
