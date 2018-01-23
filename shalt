@@ -41,7 +41,6 @@ class Shalt(object):
         self._cwd = self._defaultDir
         self._origcwd = self._defaultDir
         self._curdir = ''
-        self._files = []
         self._matches = []
         self._devnull = open('/dev/null','w')
 
@@ -59,39 +58,68 @@ class Shalt(object):
 
         sys.stdout.write('\nType "help" at any time to display this message.\n\n')
 
-    def _get_files(self):
-        if self._curdir == self._cwd:
-            return
+    def _list_dir(self, root=None):
+        if not root:
+            targetdir = self._cwd
+        elif not root.startswith('/'):
+            targetdir = self._cwd + '/' + root
+        else:
+            targetdir = root
 
-        self._curdir = self._cwd
-        ls = self._cmd[:]
-        ls += ['ls', "cwd='%s'" % self._curdir, '--out=json', '--static']
-        p = subprocess.Popen(ls, stdout=subprocess.PIPE, stderr=self._devnull)
+        stat = self._cmd[:]
+        stat += ['stat -c "%n:::%F" *', 'cwd=%s' % targetdir, '--out=json', '--static']
+        p = subprocess.Popen(stat, stdout=subprocess.PIPE)
         out, err = p.communicate()
+
         try:
-            lsout = ast.literal_eval(out)
+            statout = ast.literal_eval(out)
         except:
             sys.stderr.write('Tab completion error!\n')
             return None
 
         common = set()
-        for m in lsout.keys():
+        for i in statout:
             if len(common) == 0:
-                common = set(lsout[m].split('\n'))
+                common = set(statout[i].split('\n'))
             else:
-                common = common.intersection(set(lsout[m].split('\n')))
+                common = common.intersection(set(statout[i].split('\n')))
 
-        self._files = list(common)
-        self._files.sort()
+        files = list(common)
+        files.sort()
+        
+        res = []
+        for f in files:
+            n,t = f.split(':::')
+            if t == 'directory': 
+                res.append(n + '/')
+            else: 
+                res.append(n)
+                
+        return res
+
+    def _complete_path(self, path=None):
+        if not path:
+            return self._list_dir()
+        
+        dirname, basename = os.path.split(path)
+        res = []
+        for p in self._list_dir(dirname):
+            if p.startswith(basename):
+                res.append(os.path.join(dirname, p))
+
+        if len(res) >= 1:
+            return res
+        else:
+            return [path]               
 
     def _tab_complete(self, text, state):
+        rlbuff = readline.get_line_buffer().split()
+
         if state == 0:
-            if text:
-                self._matches = []
-                for f in self._files:
-                    if f and f.startswith(text): self._matches += [f]
+            if not rlbuff or len(rlbuff) < 2:
+                self._matches = self._complete_path()
             else:
-                self._matches = self._files[:]
+                self._matches = self._complete_path(rlbuff[-1])
 
         try:
             result = self._matches[state]
@@ -111,7 +139,6 @@ class Shalt(object):
 
         self._help()
 
-        self._get_files()
         while True:
             try:
                 line = raw_input('[%s] %s%s ' % (self._mode, self._cwd, self._prompt)).strip()
@@ -129,7 +156,6 @@ class Shalt(object):
                     self._mode = self._modes['MAIN']
                     self._subselect = False
                     self._cwd = self._origcwd
-                    self._get_files()
                     continue
 
                 break
@@ -142,7 +168,6 @@ class Shalt(object):
 
                 if arg == '':
                     self._cwd = self._defaultDir
-                    self._get_files()
                     continue
 
                 if arg.startswith('/'):
@@ -164,7 +189,6 @@ class Shalt(object):
                 run += ['cd %s' % self._cwd]
                 try:
                     junk = subprocess.check_call(run, stdout=self._devnull, stderr=self._devnull)
-                    self._get_files()
                 except:
                     sys.stderr.write("ERROR: could not cd to '%s'\n" % re.sub('^ *cd +|^ *cd *$', '', line))
                     self._cwd = oldcwd
