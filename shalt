@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, getopt, subprocess, re, readline, os, shlex, tempfile, shutil, ast
+import sys, getopt, subprocess, re, readline, os, shlex, tempfile, shutil, ast, socket
 
 def usage():
     sys.stderr.write('Usage: %s [-E pattern | -L host,... | -N nodegroup]\n' % sys.argv[0].split('/')[-1])
@@ -43,10 +43,15 @@ class Shalt(object):
         self._curdir = ''
         self._matches = []
         self._devnull = open('/dev/null','w')
+        self._bg = False
+        self._jobs = []
+        self._hostname = socket.gethostname()
 
     def _help(self):
         sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n')
         sys.stdout.write('Ctrl-C to cancel a command. Ctrl-G to abort a reverse history search (via Ctrl-R).\n\n')
+        sys.stdout.write('To run a command in the background: bg <command>\n')
+        sys.stdout.write('To retrieve background jobs: jobs [job id]\n\n')
         sys.stdout.write('To select a subset of minions, use "select [minions] [command]". Commands will only run on this subset.\n')
         sys.stdout.write('Select examples:\n')
         sys.stdout.write('\tselect\n')
@@ -86,21 +91,21 @@ class Shalt(object):
 
         files = list(common)
         files.sort()
-        
+
         res = []
         for f in files:
             n,t = f.split(':::')
-            if t == 'directory': 
+            if t == 'directory':
                 res.append(n + '/')
-            else: 
+            else:
                 res.append(n)
-                
+
         return res
 
     def _complete_path(self, path=None):
         if not path:
             return self._list_dir()
-        
+
         dirname, basename = os.path.split(path)
         res = []
         for p in self._list_dir(dirname):
@@ -110,7 +115,7 @@ class Shalt(object):
         if len(res) >= 1:
             return res
         else:
-            return [path]               
+            return [path]
 
     def _tab_complete(self, text, state):
         rlbuff = readline.get_line_buffer().split()
@@ -140,6 +145,8 @@ class Shalt(object):
         self._help()
 
         while True:
+            if self._bg:
+                self._bg = False
             try:
                 line = raw_input('[%s] %s%s ' % (self._mode, self._cwd, self._prompt)).strip()
             except EOFError:
@@ -159,6 +166,12 @@ class Shalt(object):
                     continue
 
                 break
+
+            if re.search('^bg +', line) != None:
+                self._bg = True
+                line = re.sub('^bg +','', line).strip()
+                if not line:
+                    continue
 
             if re.search('^cd +|^cd$', line) != None:
                 oldcwd = self._cwd
@@ -289,6 +302,27 @@ class Shalt(object):
                 else:
                     run += [line]
 
+            elif re.search('^(job|jobs) *', line) != None:
+                args = shlex.split(line)
+                if len(args) == 1:
+                    count = 1
+                    for job in self._jobs:
+                        sys.stdout.write('%s: %s\n' % (count, job[1]))
+                        count += 1
+                    continue
+
+                elif len(args) == 2:
+                    try:
+                        jid = self._jobs[int(args[1])-1][0]
+                        getjob = ['salt', '--timeout=%s' % self._timeout, '-E', self._hostname, 'cmd.run']
+                        getjob += ['salt-run jobs.lookup_jid %s' % jid, '--out=newline_values_only']
+                        p = subprocess.Popen(getjob)
+                        p.communicate()
+                    except:
+                        sys.stderr.write('Could not retrieve job %s.\n' % args[1])
+
+                    continue
+
             elif re.search('^(edit|vi|vim) +', line) != None:
                 if not self._subselect:
                     sys.stderr.write('Select ONE minion first before using edit feature\n')
@@ -368,9 +402,16 @@ class Shalt(object):
                 run += ["cwd='%s'" % self._cwd]
                 run += [self._path + line]
 
-            p = subprocess.Popen(run)
+            if self._bg:
+                run += ['--async']
+                p = subprocess.Popen(run, stdout=subprocess.PIPE, stderr=self._devnull)
+            else:
+                p = subprocess.Popen(run)
+
             try:
-                p.communicate()
+                out, err = p.communicate()
+                if out and self._bg:
+                    self._jobs.append((out.split()[-1], line))
             except KeyboardInterrupt:
                 p.kill()
                 sys.stderr.write('\nKeyboard interrupt\n')
