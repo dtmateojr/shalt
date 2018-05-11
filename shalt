@@ -121,7 +121,7 @@ class Shalt(object):
         rlbuff = readline.get_line_buffer().split()
 
         if state == 0:
-            if not rlbuff or len(rlbuff) < 2:
+            if not rlbuff:
                 self._matches = self._complete_path()
             else:
                 self._matches = self._complete_path(rlbuff[-1])
