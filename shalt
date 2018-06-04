@@ -339,6 +339,7 @@ class Shalt(object):
 
                 filename = shlex.split(line)[1]
                 cat = self._cmd[:]
+                # we add an extra trailing XXXXX because newline_values_only strips away the trailing empty lines in a file
                 cat += ["cwd='%s'" % self._cwd, self._path + 'cat %s; echo "XXXXX"' % filename, '--out=newline_values_only']
                 try:
                     p = subprocess.Popen(cat, stdout=subprocess.PIPE, stderr=self._devnull)
@@ -352,6 +353,7 @@ class Shalt(object):
                 with open('%s/%s' % (tempd, buf), 'w') as origfile:
                     origfile.write(out)
                 with open('%s/%s.copy' % (tempd, buf), 'w') as copyfile:
+                    # and this is where we strip away the extra XXXXX we added above
                     subprocess.call(['head','-n', '-1', '%s/%s' % (tempd, buf)], stdout=copyfile)
                 shutil.copy('%s/%s.copy' % (tempd, buf), '%s/%s' % (tempd, buf))
 
