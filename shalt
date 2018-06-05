@@ -394,7 +394,7 @@ class Shalt(object):
                     continue
 
                 delpatch = self._cmd[:]
-                delpatch += [self._path + '\rm %s' % tempf]
+                delpatch += [self._path + 'rm -f %s' % tempf]
                 subprocess.call(delpatch, stdout=self._devnull, stderr=self._devnull)
 
                 continue
