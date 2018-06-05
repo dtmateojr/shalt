@@ -324,23 +324,23 @@ class Shalt(object):
                     continue
 
             elif re.search('^(edit|vi|vim) +', line) != None:
-                if not self._subselect:
-                    sys.stderr.write('Select ONE minion first before using edit feature\n')
-                    continue
-
                 testrun = self._cmd[:]
                 testrun[testrun.index(self._defaultCmd)] = 'test.ping'
                 ping = ' '.join(testrun) + '|grep True|wc -l'
-                p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=self._devnull, shell=True)
-                out, err = p.communicate()
-                if int(out) != 1:
-                    sys.stderr.write('Edit feature only works when ONE minion is selected.\n')
+                try:
+                    p = subprocess.Popen(ping, stdout=subprocess.PIPE, stderr=self._devnull, shell=True)
+                    out, err = p.communicate()
+                    if int(out) != 1:
+                        sys.stderr.write('Edit feature only works when ONE minion is selected.\n')
+                        continue
+                except:
+                    sys.stderr.write('Unknown error. Aborting.\n')
                     continue
 
                 filename = shlex.split(line)[1]
                 cat = self._cmd[:]
                 # we add an extra trailing XXXXX because newline_values_only strips away the trailing empty lines in a file
-                cat += ["cwd='%s'" % self._cwd, self._path + 'cat %s; echo "XXXXX"' % filename, '--out=newline_values_only']
+                cat += ["cwd='%s'" % self._cwd, self._path + 'test -f %s && cat %s; echo "XXXXX"' % (filename, filename), '--out=newline_values_only']
                 try:
                     p = subprocess.Popen(cat, stdout=subprocess.PIPE, stderr=self._devnull)
                     out, err = p.communicate()
