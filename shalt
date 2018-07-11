@@ -148,7 +148,8 @@ class Shalt(object):
             if self._bg:
                 self._bg = False
             try:
-                line = raw_input('[%s] %s%s ' % (self._mode, self._cwd, self._prompt)).strip()
+                tgt = ' '.join(self._cmd[self._MI-1:self._MI+1])[:40]
+                line = raw_input('[%s] <%s> %s%s ' % (self._mode, tgt, self._cwd, self._prompt)).strip()
             except EOFError:
                 sys.stdout.write('\n')
                 return
