@@ -369,33 +369,19 @@ class Shalt(object):
                     sys.stdout.write('No change to original file. Edit cancelled.\n')
                     continue
 
-                tempf = tempfile.mktemp(prefix='.shalt-')
-
-                saltwrite = self._cmd[:]
-                saltwrite.insert(saltwrite.index(self._defaultCmd), '--')
-                saltwrite[saltwrite.index(self._defaultCmd)] = 'file.write'
-                saltwrite += [tempf, '%s' % diff]
-                try:
-                    subprocess.call(saltwrite, stdout=self._devnull, stderr=self._devnull)
-                except:
-                    sys.stderr.write('Could not write to %s. Change might be too big?\n' % filename)
-                    continue
-
                 if not filename.startswith('/'):
                     filename = self._cwd + '/' + filename
 
+                tempf = tempfile.mktemp(prefix='.shalt-')
                 saltpatch = self._cmd[:]
-                saltpatch[saltpatch.index(self._defaultCmd)] = 'file.patch'
-                saltpatch += [filename, tempf]
+                saltpatch.insert(saltpatch.index(self._defaultCmd), '--')
+                saltpatch[saltpatch.index(self._defaultCmd)] = 'file.write,file.patch,cmd.run'
+                saltpatch += [tempf, '%s' % diff, ',', filename, tempf, ',', self._path + 'rm -f %s' % tempf]
                 try:
                     subprocess.call(saltpatch, stdout=self._devnull, stderr=self._devnull)
                 except:
-                    sys.stderr.write('Unknown error writing to file.\n')
+                    sys.stderr.write('Error during write. Change might be too big?\n')
                     continue
-
-                delpatch = self._cmd[:]
-                delpatch += [self._path + 'rm -f %s' % tempf]
-                subprocess.call(delpatch, stdout=self._devnull, stderr=self._devnull)
 
                 continue
 
