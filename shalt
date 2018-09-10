@@ -50,6 +50,8 @@ class Shalt(object):
     def _help(self):
         sys.stdout.write('Enter your commands as if running in a shell. "exit" or "quit" to stop.\n')
         sys.stdout.write('Ctrl-C to cancel a command. Ctrl-G to abort a reverse history search (via Ctrl-R).\n\n')
+        sys.stdout.write('To edit a file: edit|vi|vim <file>\n')
+        sys.stdout.write('\tSimultaneous editing on multiple minions is allowed if the file is identical across all minions.\n\n')
         sys.stdout.write('To run a command in the background: bg <command>\n')
         sys.stdout.write('To retrieve background jobs: jobs [job id]\n\n')
         sys.stdout.write('To select a subset of minions, use "select [minions] [command]". Commands will only run on this subset.\n')
