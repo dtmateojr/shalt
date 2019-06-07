@@ -418,7 +418,8 @@ class Shalt(object):
 
                 # the real command is the reverse of args[0]
                 comm = args[0][::-1]
-                subprocess.call('/usr/bin/%s %s/*' % (comm, tempd), shell=True)
+                files = ','.join([a.split(':')[0] for a in args[1:]])
+                subprocess.call('/usr/bin/%s %s/{%s}' % (comm, tempd, files), shell=True)
                 shutil.rmtree(tempd)
                 continue
 
