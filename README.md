@@ -106,7 +106,6 @@ foo4bar400:
 foo4bar402:
     testing
     another line
-exit
 [main] <-E foo4bar40[012]> /root>
 [main] <-E foo4bar40[012]> /root> ffids foo4bar400:/tmp/foo foo4bar401:/tmp/foo
 testing                           testing
